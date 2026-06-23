@@ -2,9 +2,9 @@
 
 Streamlit app that:
 1. Takes a **SKU/campaign file** (has SKU, Article Number, and a Campaign
-   Price column you want filled in) and a **content file** (has Article
+   Price column you want filled in) and a **Zecom Tracker** (has Article
    Number, RRP, and SRP).
-2. Matches each SKU's Article Number against the content file.
+2. Matches each SKU's Article Number against the Zecom Tracker.
 3. Sets Campaign Price = SRP; if SRP is blank/missing, falls back to RRP.
 4. Flags any rows where neither RRP nor SRP was found.
 
@@ -23,11 +23,11 @@ streamlit run app.py
 - Both files can be `.xlsx` (any sheet, you pick which one) or `.csv`.
 - After upload, you map which column is which (SKU, Article Number,
   Campaign Price in the SKU file; Article Number, RRP, SRP in the
-  content file) — no hardcoded column names, so it works with whatever
+  Zecom Tracker) — no hardcoded column names, so it works with whatever
   headers your real files use.
 - Article numbers are compared as trimmed strings so type mismatches
   (e.g. `"1234"` vs `1234.0`) still match correctly.
-- If the content file has duplicate Article Numbers, the first one is
+- If the Zecom Tracker has duplicate Article Numbers, the first one is
   used.
 - Output is an Excel file with an "Updated" sheet (your data with
   Campaign Price filled in) and, if any rows didn't match, an
