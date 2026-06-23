@@ -5,7 +5,7 @@ import streamlit as st
 st.set_page_config(page_title="Campaign Price Updater", layout="wide")
 st.title("Campaign Price Updater")
 st.caption(
-    "Looks up each SKU's Article Number, pulls RRP/SRP from the content file, "
+    "Looks up each SKU's Article Number, pulls RRP/SRP from the Zecom Tracker, "
     "and fills the campaign price column with SRP (falling back to RRP)."
 )
 
@@ -17,7 +17,7 @@ with col1:
     )
 with col2:
     content_file = st.file_uploader(
-        "Content file (has Article Number, RRP, SRP)",
+        "Zecom Tracker (has Article Number, RRP, SRP)",
         type=["xlsx", "csv"], key="content_file",
     )
 
@@ -42,7 +42,7 @@ if sku_file is not None:
     st.dataframe(sku_df.head(5), use_container_width=True)
 
 if content_file is not None:
-    st.subheader("Content file")
+    st.subheader("Zecom Tracker")
     content_df = read_any(content_file, "content_sheet")
     st.dataframe(content_df.head(5), use_container_width=True)
 
@@ -65,12 +65,12 @@ if sku_df is not None and content_df is not None:
     c4, c5, c6 = st.columns(3)
     with c4:
         content_article_col = st.selectbox(
-            "Article Number column (in content file)", content_df.columns, key="content_article_col"
+            "Article Number column (in Zecom Tracker)", content_df.columns, key="content_article_col"
         )
     with c5:
-        rrp_col = st.selectbox("RRP column (content file)", content_df.columns, key="rrp_col")
+        rrp_col = st.selectbox("RRP column (Zecom Tracker)", content_df.columns, key="rrp_col")
     with c6:
-        srp_col = st.selectbox("SRP column (content file)", content_df.columns, key="srp_col")
+        srp_col = st.selectbox("SRP column (Zecom Tracker)", content_df.columns, key="srp_col")
 
     if st.button("Update Campaign Prices", type="primary"):
         sku_work = sku_df.copy()
