@@ -1,12 +1,15 @@
 # Campaign Price Updater
 
 Streamlit app that:
-1. Takes a **SKU/campaign file** (has SKU, Article Number, and a Campaign
-   Price column you want filled in) and a **Zecom Tracker** (has Article
-   Number, RRP, and SRP).
-2. Matches each SKU's Article Number against the Zecom Tracker.
-3. Sets Campaign Price = SRP; if SRP is blank/missing, falls back to RRP.
-4. Flags any rows where neither RRP nor SRP was found.
+1. Takes three files:
+   - **Campaign file** — has SKU and a Campaign Price column you want filled in.
+   - **Content file** — has SKU and Article Number (maps each SKU to its Article Number).
+   - **Zecom Tracker** — has Article Number, RRP, and SRP.
+2. Looks up each SKU's Article Number using the Content file.
+3. Uses that Article Number to look up RRP and SRP from the Zecom Tracker.
+4. Sets Campaign Price = SRP; if SRP is blank/missing, falls back to RRP.
+5. Flags any rows where the SKU had no Article Number in the Content file, or
+   the Article Number had neither RRP nor SRP in the Tracker.
 
 ## Run locally
 ```bash
@@ -20,15 +23,19 @@ streamlit run app.py
    pointing at the repo and `app.py`.
 
 ## How it works
-- Both files can be `.xlsx` (any sheet, you pick which one) or `.csv`.
-- After upload, you map which column is which (SKU, Article Number,
-  Campaign Price in the SKU file; Article Number, RRP, SRP in the
-  Zecom Tracker) — no hardcoded column names, so it works with whatever
-  headers your real files use.
-- Article numbers are compared as trimmed strings so type mismatches
+- All three files can be `.xlsx` (any sheet, you pick which one) or `.csv`.
+- After upload, you map which column is which:
+  - Campaign file: SKU column, Campaign Price column.
+  - Content file: SKU column, Article Number column.
+  - Zecom Tracker: Article Number column, RRP column, SRP column.
+  - No hardcoded column names, so it works with whatever headers your real
+    files use.
+- SKUs and Article Numbers are compared as trimmed strings so type mismatches
   (e.g. `"1234"` vs `1234.0`) still match correctly.
-- If the Zecom Tracker has duplicate Article Numbers, the first one is
-  used.
-- Output is an Excel file with an "Updated" sheet (your data with
-  Campaign Price filled in) and, if any rows didn't match, an
-  "Unmatched" sheet listing them for manual review.
+- If the Content file has duplicate SKUs, or the Zecom Tracker has duplicate
+  Article Numbers, the first occurrence is used.
+- Output is an Excel file with an "Updated" sheet (your Campaign data with
+  Campaign Price filled in) and, if any rows didn't match, an "Unmatched"
+  sheet listing them for manual review — split into "no Article Number
+  found" and "Article Number found but no RRP/SRP" so you know which file to
+  go fix.
