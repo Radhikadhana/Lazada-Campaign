@@ -96,14 +96,39 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
     if st.button("Update Campaign Prices", type="primary"):
         campaign_work = campaign_df.copy()
 
+        def normalize_key(val):
+            """Turn SKU/Article values into a comparable string.
+
+            Handles the common Excel gotchas that break lookups:
+            - numeric IDs read in as floats (1234 -> "1234.0")
+            - long IDs read in as scientific notation (4.07E+12)
+            - stray whitespace / non-breaking spaces
+            """
+            if pd.isna(val):
+                return ""
+            if isinstance(val, float):
+                if val.is_integer():
+                    return str(int(val))
+                return repr(val)
+            s = str(val).strip().replace("\xa0", "")
+            if s == "":
+                return ""
+            try:
+                f = float(s)
+                if f.is_integer():
+                    return str(int(f))
+                return repr(f)
+            except (ValueError, TypeError):
+                return s
+
         # --- Step 1: SKU -> Article Number, using the Content file ---
         content_work = content_df[[content_sku_col, content_article_col]].copy()
         content_work.columns = ["_sku", "_article"]
-        content_work["_sku_key"] = content_work["_sku"].astype(str).str.strip()
-        content_work["_article"] = content_work["_article"].astype(str).str.strip()
+        content_work["_sku_key"] = content_work["_sku"].apply(normalize_key)
+        content_work["_article"] = content_work["_article"].apply(normalize_key)
         content_work = content_work.drop_duplicates(subset="_sku_key", keep="first")
 
-        campaign_work["_sku_key"] = campaign_work[campaign_sku_col].astype(str).str.strip()
+        campaign_work["_sku_key"] = campaign_work[campaign_sku_col].apply(normalize_key)
 
         merged = campaign_work.merge(
             content_work[["_sku_key", "_article"]], on="_sku_key", how="left"
@@ -112,12 +137,35 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
         # --- Step 2: Article Number -> RRP / SRP, using the Zecom Tracker ---
         tracker_work = tracker_df[[tracker_article_col, rrp_col, srp_col]].copy()
         tracker_work.columns = ["_article_t", "_rrp", "_srp"]
-        tracker_work["_article_t"] = tracker_work["_article_t"].astype(str).str.strip()
+        tracker_work["_article_t"] = tracker_work["_article_t"].apply(normalize_key)
         tracker_work = tracker_work.drop_duplicates(subset="_article_t", keep="first")
 
         merged = merged.merge(
             tracker_work, left_on="_article", right_on="_article_t", how="left"
         )
+
+        # --- Diagnostics: help pinpoint why a lookup step isn't matching ---
+        step1_unmatched = merged["_article"].isna().sum()
+        step2_unmatched = (merged["_article"].notna() & merged["_article_t"].isna()).sum()
+        with st.expander("Matching diagnostics (open if RRP/SRP still come back blank)"):
+            st.write(
+                f"SKU → Article Number: {len(merged) - step1_unmatched} matched, "
+                f"{step1_unmatched} unmatched."
+            )
+            st.write(
+                f"Article Number → RRP/SRP: {len(merged) - step1_unmatched - step2_unmatched} matched, "
+                f"{step2_unmatched} unmatched (of rows that had an Article Number)."
+            )
+            if step2_unmatched > 0:
+                sample_missing = (
+                    merged.loc[merged["_article"].notna() & merged["_article_t"].isna(), "_article"]
+                    .drop_duplicates()
+                    .head(10)
+                )
+                st.write("Sample Article Numbers (from Content file) not found in Zecom Tracker:")
+                st.write(list(sample_missing))
+                st.write("Sample Article Numbers as they appear in Zecom Tracker:")
+                st.write(list(tracker_work["_article_t"].drop_duplicates().head(10)))
 
         def is_missing_price(val):
             """A price counts as missing if it's blank/NaN OR equal to 0."""
