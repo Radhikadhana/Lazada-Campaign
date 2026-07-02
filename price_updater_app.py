@@ -83,6 +83,13 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
             "Article Number column (in Content file)", content_df.columns, key="content_article_col"
         )
 
+    strip_color_suffix = st.checkbox(
+        "Content file's Article Number is a color number like 783237_01 — "
+        "match using only the part before the underscore",
+        value=True,
+        key="strip_color_suffix",
+    )
+
     c5, c6, c7 = st.columns(3)
     with c5:
         tracker_article_col = st.selectbox(
@@ -121,11 +128,18 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
             except (ValueError, TypeError):
                 return s
 
+        def base_article_key(val):
+            """Normalize an Article/color number, optionally dropping a _XX color suffix."""
+            key = normalize_key(val)
+            if strip_color_suffix and "_" in key:
+                key = key.split("_")[0]
+            return key
+
         # --- Step 1: SKU -> Article Number, using the Content file ---
         content_work = content_df[[content_sku_col, content_article_col]].copy()
         content_work.columns = ["_sku", "_article"]
         content_work["_sku_key"] = content_work["_sku"].apply(normalize_key)
-        content_work["_article"] = content_work["_article"].apply(normalize_key)
+        content_work["_article"] = content_work["_article"].apply(base_article_key)
         content_work = content_work.drop_duplicates(subset="_sku_key", keep="first")
 
         campaign_work["_sku_key"] = campaign_work[campaign_sku_col].apply(normalize_key)
@@ -137,7 +151,7 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
         # --- Step 2: Article Number -> RRP / SRP, using the Zecom Tracker ---
         tracker_work = tracker_df[[tracker_article_col, rrp_col, srp_col]].copy()
         tracker_work.columns = ["_article_t", "_rrp", "_srp"]
-        tracker_work["_article_t"] = tracker_work["_article_t"].apply(normalize_key)
+        tracker_work["_article_t"] = tracker_work["_article_t"].apply(base_article_key)
         tracker_work = tracker_work.drop_duplicates(subset="_article_t", keep="first")
 
         merged = merged.merge(
