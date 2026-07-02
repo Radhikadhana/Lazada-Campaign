@@ -29,6 +29,27 @@ with col3:
     )
 
 
+def excel_col_letter(idx):
+    """Convert a 0-based column index to Excel-style letters (0->A, 25->Z, 26->AA...)."""
+    letters = ""
+    idx += 1
+    while idx > 0:
+        idx, rem = divmod(idx - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
+
+
+def make_col_formatter(columns):
+    """Return a format_func that prefixes each column name with its Excel letter."""
+    cols = list(columns)
+
+    def fmt(col):
+        letter = excel_col_letter(cols.index(col))
+        return f"{letter}: {col}"
+
+    return fmt
+
+
 def read_any(uploaded_file, sheet_picker_key):
     """Read an uploaded csv/xlsx, letting the user pick a sheet for xlsx."""
     if uploaded_file.name.lower().endswith(".csv"):
@@ -65,22 +86,26 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
     c1, c2 = st.columns(2)
     with c1:
         campaign_sku_col = st.selectbox(
-            "SKU column (in Campaign file)", campaign_df.columns, key="campaign_sku_col"
+            "SKU column (in Campaign file)", campaign_df.columns, key="campaign_sku_col",
+            format_func=make_col_formatter(campaign_df.columns),
         )
     with c2:
         campaign_price_col = st.selectbox(
             "Campaign Price column to update (in Campaign file)",
             campaign_df.columns, key="campaign_price_col",
+            format_func=make_col_formatter(campaign_df.columns),
         )
 
     c3, c4 = st.columns(2)
     with c3:
         content_sku_col = st.selectbox(
-            "SKU column (in Content file)", content_df.columns, key="content_sku_col"
+            "SKU column (in Content file)", content_df.columns, key="content_sku_col",
+            format_func=make_col_formatter(content_df.columns),
         )
     with c4:
         content_article_col = st.selectbox(
-            "Article Number column (in Content file)", content_df.columns, key="content_article_col"
+            "Article Number column (in Content file)", content_df.columns, key="content_article_col",
+            format_func=make_col_formatter(content_df.columns),
         )
 
     strip_color_suffix = st.checkbox(
@@ -93,12 +118,19 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
     c5, c6, c7 = st.columns(3)
     with c5:
         tracker_article_col = st.selectbox(
-            "Article Number column (in Zecom Tracker)", tracker_df.columns, key="tracker_article_col"
+            "Article Number column (in Zecom Tracker)", tracker_df.columns, key="tracker_article_col",
+            format_func=make_col_formatter(tracker_df.columns),
         )
     with c6:
-        rrp_col = st.selectbox("RRP column (Zecom Tracker)", tracker_df.columns, key="rrp_col")
+        rrp_col = st.selectbox(
+            "RRP column (Zecom Tracker)", tracker_df.columns, key="rrp_col",
+            format_func=make_col_formatter(tracker_df.columns),
+        )
     with c7:
-        srp_col = st.selectbox("SRP column (Zecom Tracker)", tracker_df.columns, key="srp_col")
+        srp_col = st.selectbox(
+            "SRP column (Zecom Tracker)", tracker_df.columns, key="srp_col",
+            format_func=make_col_formatter(tracker_df.columns),
+        )
 
     if st.button("Update Campaign Prices", type="primary"):
         campaign_work = campaign_df.copy()
