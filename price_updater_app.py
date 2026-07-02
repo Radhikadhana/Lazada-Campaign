@@ -6,8 +6,9 @@ st.set_page_config(page_title="Campaign Price Updater", layout="wide")
 st.title("Campaign Price Updater")
 st.caption(
     "Looks up each SKU's Article Number from the Content file, pulls RRP/SRP "
-    "for that Article Number from the Zecom Tracker, and fills the campaign "
-    "price column with SRP (falling back to RRP)."
+    "for that Article Number from the Zecom Tracker, adds Article Number, RRP, "
+    "and SRP as new columns in the Campaign sheet, and fills the campaign price "
+    "column with SRP (falling back to RRP whenever SRP is blank or 0)."
 )
 
 col1, col2, col3 = st.columns(3)
@@ -151,22 +152,44 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
         matched_srp = (~srp_missing).sum()
         matched_rrp_fallback = (srp_missing & ~rrp_missing).sum()
 
-        drop_cols = ["_sku_key", "_article", "_article_t", "_rrp", "_srp"]
+        # --- Add Article Number / RRP / SRP as their own columns in the output ---
+        # Pick names that won't collide with any column already in the Campaign file.
+        existing_cols = set(campaign_df.columns)
+
+        def unique_name(base):
+            name = base
+            i = 2
+            while name in existing_cols:
+                name = f"{base} ({i})"
+                i += 1
+            existing_cols.add(name)
+            return name
+
+        article_out_col = unique_name("Article Number")
+        rrp_out_col = unique_name("RRP")
+        srp_out_col = unique_name("SRP")
+
+        rename_map = {"_article": article_out_col, "_rrp": rrp_out_col, "_srp": srp_out_col}
+        merged = merged.rename(columns=rename_map)
+
+        drop_cols = ["_sku_key", "_article_t"]
         result_df = merged.drop(columns=drop_cols)
 
         st.success(
             f"Updated {len(result_df)} rows — {matched_srp} from SRP, "
             f"{matched_rrp_fallback} fell back to RRP, {len(unmatched)} had no match "
             f"({int(no_article.sum())} with no Article Number found, "
-            f"{int(no_price.sum())} with an Article Number but no RRP/SRP)."
+            f"{int(no_price.sum())} with an Article Number but no RRP/SRP). "
+            f"Added columns: '{article_out_col}', '{rrp_out_col}', '{srp_out_col}'."
         )
 
         st.subheader("Preview")
         st.dataframe(result_df.head(50), use_container_width=True)
 
         if len(unmatched) > 0:
+            unmatched_display = unmatched.rename(columns=rename_map).drop(columns=drop_cols)
             st.subheader("Unmatched rows (no Article Number, or no RRP/SRP found)")
-            st.dataframe(unmatched.drop(columns=drop_cols), use_container_width=True)
+            st.dataframe(unmatched_display, use_container_width=True)
 
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
