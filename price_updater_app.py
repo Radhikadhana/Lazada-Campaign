@@ -118,23 +118,38 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
             tracker_work, left_on="_article", right_on="_article_t", how="left"
         )
 
+        def is_missing_price(val):
+            """A price counts as missing if it's blank/NaN OR equal to 0."""
+            if pd.isna(val):
+                return True
+            s = str(val).strip()
+            if s == "":
+                return True
+            try:
+                return float(s) == 0
+            except ValueError:
+                return False
+
         def pick_price(row):
             srp = row["_srp"]
             rrp = row["_rrp"]
-            if pd.notna(srp) and str(srp).strip() != "":
+            if not is_missing_price(srp):
                 return srp
-            if pd.notna(rrp) and str(rrp).strip() != "":
+            if not is_missing_price(rrp):
                 return rrp
             return pd.NA
 
         merged[campaign_price_col] = merged.apply(pick_price, axis=1)
 
+        srp_missing = merged["_srp"].apply(is_missing_price)
+        rrp_missing = merged["_rrp"].apply(is_missing_price)
+
         no_article = merged["_article"].isna()
-        no_price = merged["_rrp"].isna() & merged["_srp"].isna() & ~no_article
+        no_price = rrp_missing & srp_missing & ~no_article
         unmatched = merged[no_article | no_price]
 
-        matched_srp = merged["_srp"].notna().sum()
-        matched_rrp_fallback = ((merged["_srp"].isna()) & (merged["_rrp"].notna())).sum()
+        matched_srp = (~srp_missing).sum()
+        matched_rrp_fallback = (srp_missing & ~rrp_missing).sum()
 
         drop_cols = ["_sku_key", "_article", "_article_t", "_rrp", "_srp"]
         result_df = merged.drop(columns=drop_cols)
