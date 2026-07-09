@@ -1,5 +1,6 @@
 import io
 import re
+import zipfile
 import pandas as pd
 import streamlit as st
 
@@ -10,8 +11,9 @@ st.caption(
     "for that Article Number from the Zecom Tracker, adds Article Number, RRP, "
     "and SRP as new columns in the Campaign sheet(s), and fills the campaign "
     "price column with SRP (falling back to RRP whenever SRP is blank or 0). "
-    "You can upload multiple Campaign files at once — they'll be processed "
-    "together and you'll get both a combined result and a per-file sheet."
+    "You can upload multiple Campaign files at once — each one gets its own "
+    "standalone output file, so you can upload them individually (e.g. to a "
+    "marketplace), plus a ZIP with everything together."
 )
 
 col1, col2, col3 = st.columns(3)
@@ -45,12 +47,22 @@ def excel_col_letter(idx):
     return letters
 
 
+_UNNAMED_RE = re.compile(r"^Unnamed:\s*\d+$")
+
+
 def make_col_formatter(columns):
-    """Return a format_func that prefixes each column name with its Excel letter."""
+    """Return a format_func that prefixes each column name with its Excel letter.
+
+    Pandas auto-names blank header cells "Unnamed: N" — that's noise to the user,
+    so for those we just show the Excel letter with a "(blank header)" hint
+    instead of the raw "Unnamed: N" text.
+    """
     cols = list(columns)
 
     def fmt(col):
         letter = excel_col_letter(cols.index(col))
+        if isinstance(col, str) and _UNNAMED_RE.match(col):
+            return f"{letter}: (blank header)"
         return f"{letter}: {col}"
 
     return fmt
@@ -337,32 +349,77 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
             st.subheader("Unmatched rows (no Article Number, or no RRP/SRP found)")
             st.dataframe(unmatched_display, use_container_width=True)
 
-        buffer = io.BytesIO()
-        used_sheet_names = set()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            combined_name = sanitize_sheet_name("Updated", used_sheet_names)
-            result_df.to_excel(writer, sheet_name=combined_name, index=False)
+        def build_workbook(df_updated, df_unmatched):
+            """Build a single-file xlsx (Updated sheet + optional Unmatched sheet)."""
+            buf = io.BytesIO()
+            used_names = set()
+            with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+                updated_name = sanitize_sheet_name("Updated", used_names)
+                df_updated.to_excel(writer, sheet_name=updated_name, index=False)
+                if len(df_unmatched) > 0:
+                    unmatched_name = sanitize_sheet_name("Unmatched", used_names)
+                    df_unmatched.to_excel(writer, sheet_name=unmatched_name, index=False)
+            buf.seek(0)
+            return buf
 
-            if multi_campaign:
-                # One sheet per original campaign file, using its own rows from result_df
-                source_col_name = rename_map.get(SOURCE_COL, SOURCE_COL)
-                for fname in per_file_dfs.keys():
-                    file_rows = result_df[result_df[source_col_name] == fname]
-                    sheet_name = sanitize_sheet_name(fname, used_sheet_names)
-                    file_rows.to_excel(writer, sheet_name=sheet_name, index=False)
+        def output_name_for(original_filename):
+            base = original_filename.rsplit(".", 1)[0] if "." in original_filename else original_filename
+            return f"Updated_{base}.xlsx"
 
-            if len(unmatched) > 0:
-                unmatched_sheet_name = sanitize_sheet_name("Unmatched", used_sheet_names)
-                unmatched.drop(columns=drop_cols).to_excel(
-                    writer, sheet_name=unmatched_sheet_name, index=False
+        source_col_name = rename_map.get(SOURCE_COL, SOURCE_COL)
+
+        if multi_campaign:
+            # --- Build one standalone output file per original Campaign file ---
+            st.subheader("Download your files")
+            st.caption(
+                "Each Campaign file gets its own standalone output file, ready to "
+                "upload individually (e.g. to a marketplace)."
+            )
+
+            per_file_buffers = {}
+            for fname in per_file_dfs.keys():
+                file_updated = result_df[result_df[source_col_name] == fname].drop(
+                    columns=[source_col_name]
                 )
-        buffer.seek(0)
+                file_unmatched = unmatched[unmatched[SOURCE_COL] == fname].rename(
+                    columns=rename_map
+                ).drop(columns=drop_cols + [source_col_name], errors="ignore")
+                out_name = output_name_for(fname)
+                per_file_buffers[out_name] = build_workbook(file_updated, file_unmatched)
 
-        st.download_button(
-            "Download updated file",
-            data=buffer,
-            file_name="Updated_Campaign_Prices.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+            # Individual download buttons
+            for out_name, buf in per_file_buffers.items():
+                st.download_button(
+                    f"Download {out_name}",
+                    data=buf,
+                    file_name=out_name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"dl_{out_name}",
+                )
+
+            # Convenience: all files zipped together
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                for out_name, buf in per_file_buffers.items():
+                    zf.writestr(out_name, buf.getvalue())
+            zip_buffer.seek(0)
+            st.download_button(
+                "Download all as ZIP",
+                data=zip_buffer,
+                file_name="Updated_Campaign_Prices_All.zip",
+                mime="application/zip",
+            )
+        else:
+            # Single campaign file — one straightforward download
+            single_updated = result_df.drop(columns=[source_col_name], errors="ignore")
+            single_unmatched = unmatched.drop(columns=drop_cols + [SOURCE_COL], errors="ignore")
+            buf = build_workbook(single_updated, single_unmatched)
+            out_name = output_name_for(campaign_files[0].name)
+            st.download_button(
+                "Download updated file",
+                data=buf,
+                file_name=out_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 else:
     st.info("Upload at least one Campaign file, the Content file, and the Zecom Tracker to continue.")
