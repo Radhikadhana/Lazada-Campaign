@@ -50,19 +50,20 @@ def excel_col_letter(idx):
 _UNNAMED_RE = re.compile(r"^Unnamed:\s*\d+$")
 
 
-def make_col_formatter(columns):
+def make_col_formatter(columns, blank_label=None):
     """Return a format_func that prefixes each column name with its Excel letter.
 
     Pandas auto-names blank header cells "Unnamed: N" — that's noise to the user,
-    so for those we just show the Excel letter with a "(blank header)" hint
-    instead of the raw "Unnamed: N" text.
+    so for those we show the Excel letter plus either a custom `blank_label`
+    (e.g. "ALU", "RRP", "SRP") or a generic "(blank header)" hint.
     """
     cols = list(columns)
 
     def fmt(col):
         letter = excel_col_letter(cols.index(col))
         if isinstance(col, str) and _UNNAMED_RE.match(col):
-            return f"{letter}: (blank header)"
+            label = blank_label if blank_label else "(blank header)"
+            return f"{letter}: {label}"
         return f"{letter}: {col}"
 
     return fmt
@@ -177,17 +178,17 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
     with c5:
         tracker_article_col = st.selectbox(
             "Article Number column (in Zecom Tracker)", tracker_df.columns, key="tracker_article_col",
-            format_func=make_col_formatter(tracker_df.columns),
+            format_func=make_col_formatter(tracker_df.columns, blank_label="ALU"),
         )
     with c6:
         rrp_col = st.selectbox(
             "RRP column (Zecom Tracker)", tracker_df.columns, key="rrp_col",
-            format_func=make_col_formatter(tracker_df.columns),
+            format_func=make_col_formatter(tracker_df.columns, blank_label="RRP"),
         )
     with c7:
         srp_col = st.selectbox(
             "SRP column (Zecom Tracker)", tracker_df.columns, key="srp_col",
-            format_func=make_col_formatter(tracker_df.columns),
+            format_func=make_col_formatter(tracker_df.columns, blank_label="SRP"),
         )
 
     if st.button("Update Campaign Prices", type="primary"):
