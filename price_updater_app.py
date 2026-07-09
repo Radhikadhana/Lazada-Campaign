@@ -1,4 +1,5 @@
 import io
+import re
 import pandas as pd
 import streamlit as st
 
@@ -7,15 +8,18 @@ st.title("Campaign Price Updater")
 st.caption(
     "Looks up each SKU's Article Number from the Content file, pulls RRP/SRP "
     "for that Article Number from the Zecom Tracker, adds Article Number, RRP, "
-    "and SRP as new columns in the Campaign sheet, and fills the campaign price "
-    "column with SRP (falling back to RRP whenever SRP is blank or 0)."
+    "and SRP as new columns in the Campaign sheet(s), and fills the campaign "
+    "price column with SRP (falling back to RRP whenever SRP is blank or 0). "
+    "You can upload multiple Campaign files at once — they'll be processed "
+    "together and you'll get both a combined result and a per-file sheet."
 )
 
 col1, col2, col3 = st.columns(3)
 with col1:
-    campaign_file = st.file_uploader(
-        "Campaign file (has SKU, Campaign Price)",
-        type=["xlsx", "csv"], key="campaign_file",
+    campaign_files = st.file_uploader(
+        "Campaign file(s) (has SKU, Campaign Price)",
+        type=["xlsx", "csv"], key="campaign_files",
+        accept_multiple_files=True,
     )
 with col2:
     content_file = st.file_uploader(
@@ -27,6 +31,8 @@ with col3:
         "Zecom Tracker (has Article Number, RRP, SRP)",
         type=["xlsx", "csv"], key="tracker_file",
     )
+
+SOURCE_COL = "_source_file"
 
 
 def excel_col_letter(idx):
@@ -61,14 +67,51 @@ def read_any(uploaded_file, sheet_picker_key):
     return xls.parse(sheet)
 
 
+def sanitize_sheet_name(name, used_names):
+    """Make a safe, unique Excel sheet name (<=31 chars, no invalid characters)."""
+    base = re.sub(r'[:\\/?*\[\]]', "-", name)
+    base = base.rsplit(".", 1)[0] if "." in base else base
+    base = base.strip()[:31] or "Sheet"
+    candidate = base
+    i = 2
+    while candidate in used_names:
+        suffix = f" ({i})"
+        candidate = base[: 31 - len(suffix)] + suffix
+        i += 1
+    used_names.add(candidate)
+    return candidate
+
+
 campaign_df = None
 content_df = None
 tracker_df = None
+per_file_dfs = {}
 
-if campaign_file is not None:
-    st.subheader("Campaign file")
-    campaign_df = read_any(campaign_file, "campaign_sheet")
-    st.dataframe(campaign_df.head(5), use_container_width=True)
+if campaign_files:
+    st.subheader("Campaign file(s)")
+    campaign_parts = []
+    for f in campaign_files:
+        df = read_any(f, f"campaign_sheet_{f.name}")
+        df = df.copy()
+        df[SOURCE_COL] = f.name
+        campaign_parts.append(df)
+        per_file_dfs[f.name] = df
+        st.markdown(f"**{f.name}** — {len(df)} rows")
+        st.dataframe(df.head(5), use_container_width=True)
+
+    # Union of columns across all files (order-preserving), missing values become NaN
+    campaign_df = pd.concat(campaign_parts, ignore_index=True, sort=False)
+
+    if len(campaign_files) > 1:
+        col_sets = {f.name: set(d.columns) - {SOURCE_COL} for f, d in zip(campaign_files, campaign_parts)}
+        all_same = len(set(frozenset(v) for v in col_sets.values())) == 1
+        if not all_same:
+            with st.expander("⚠️ Campaign files have different columns — click to see details"):
+                for name, cols in col_sets.items():
+                    st.write(f"**{name}**: {sorted(cols)}")
+        st.caption(
+            f"Combined {len(campaign_files)} campaign files into {len(campaign_df)} total rows."
+        )
 
 if content_file is not None:
     st.subheader("Content file")
@@ -83,17 +126,20 @@ if tracker_file is not None:
 if campaign_df is not None and content_df is not None and tracker_df is not None:
     st.subheader("Map columns")
 
+    campaign_selectable_cols = [c for c in campaign_df.columns if c != SOURCE_COL]
+    multi_campaign = len(campaign_files) > 1
+
     c1, c2 = st.columns(2)
     with c1:
         campaign_sku_col = st.selectbox(
-            "SKU column (in Campaign file)", campaign_df.columns, key="campaign_sku_col",
-            format_func=make_col_formatter(campaign_df.columns),
+            "SKU column (in Campaign file)", campaign_selectable_cols, key="campaign_sku_col",
+            format_func=(lambda c: c) if multi_campaign else make_col_formatter(campaign_selectable_cols),
         )
     with c2:
         campaign_price_col = st.selectbox(
             "Campaign Price column to update (in Campaign file)",
-            campaign_df.columns, key="campaign_price_col",
-            format_func=make_col_formatter(campaign_df.columns),
+            campaign_selectable_cols, key="campaign_price_col",
+            format_func=(lambda c: c) if multi_campaign else make_col_formatter(campaign_selectable_cols),
         )
 
     c3, c4 = st.columns(2)
@@ -212,6 +258,9 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
                 st.write(list(sample_missing))
                 st.write("Sample Article Numbers as they appear in Zecom Tracker:")
                 st.write(list(tracker_work["_article_t"].drop_duplicates().head(10)))
+            if multi_campaign:
+                st.write("Rows by source file:")
+                st.write(merged.groupby(SOURCE_COL).size().rename("rows").reset_index())
 
         def is_missing_price(val):
             """A price counts as missing if it's blank/NaN OR equal to 0."""
@@ -247,7 +296,7 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
         matched_rrp_fallback = (srp_missing & ~rrp_missing).sum()
 
         # --- Add Article Number / RRP / SRP as their own columns in the output ---
-        # Pick names that won't collide with any column already in the Campaign file.
+        # Pick names that won't collide with any column already in the Campaign file(s).
         existing_cols = set(campaign_df.columns)
 
         def unique_name(base):
@@ -264,20 +313,23 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
         srp_out_col = unique_name("SRP")
 
         rename_map = {"_article": article_out_col, "_rrp": rrp_out_col, "_srp": srp_out_col}
+        if multi_campaign:
+            rename_map[SOURCE_COL] = "Source File"
         merged = merged.rename(columns=rename_map)
 
         drop_cols = ["_sku_key", "_article_t"]
         result_df = merged.drop(columns=drop_cols)
 
         st.success(
-            f"Updated {len(result_df)} rows — {matched_srp} from SRP, "
-            f"{matched_rrp_fallback} fell back to RRP, {len(unmatched)} had no match "
+            f"Updated {len(result_df)} rows across {len(campaign_files)} campaign file(s) — "
+            f"{matched_srp} from SRP, {matched_rrp_fallback} fell back to RRP, "
+            f"{len(unmatched)} had no match "
             f"({int(no_article.sum())} with no Article Number found, "
             f"{int(no_price.sum())} with an Article Number but no RRP/SRP). "
             f"Added columns: '{article_out_col}', '{rrp_out_col}', '{srp_out_col}'."
         )
 
-        st.subheader("Preview")
+        st.subheader("Preview (combined)")
         st.dataframe(result_df.head(50), use_container_width=True)
 
         if len(unmatched) > 0:
@@ -286,11 +338,23 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
             st.dataframe(unmatched_display, use_container_width=True)
 
         buffer = io.BytesIO()
+        used_sheet_names = set()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            result_df.to_excel(writer, sheet_name="Updated", index=False)
+            combined_name = sanitize_sheet_name("Updated", used_sheet_names)
+            result_df.to_excel(writer, sheet_name=combined_name, index=False)
+
+            if multi_campaign:
+                # One sheet per original campaign file, using its own rows from result_df
+                source_col_name = rename_map.get(SOURCE_COL, SOURCE_COL)
+                for fname in per_file_dfs.keys():
+                    file_rows = result_df[result_df[source_col_name] == fname]
+                    sheet_name = sanitize_sheet_name(fname, used_sheet_names)
+                    file_rows.to_excel(writer, sheet_name=sheet_name, index=False)
+
             if len(unmatched) > 0:
+                unmatched_sheet_name = sanitize_sheet_name("Unmatched", used_sheet_names)
                 unmatched.drop(columns=drop_cols).to_excel(
-                    writer, sheet_name="Unmatched", index=False
+                    writer, sheet_name=unmatched_sheet_name, index=False
                 )
         buffer.seek(0)
 
@@ -301,4 +365,4 @@ if campaign_df is not None and content_df is not None and tracker_df is not None
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 else:
-    st.info("Upload the Campaign file, the Content file, and the Zecom Tracker to continue.")
+    st.info("Upload at least one Campaign file, the Content file, and the Zecom Tracker to continue.")
